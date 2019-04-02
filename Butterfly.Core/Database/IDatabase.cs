@@ -277,7 +277,7 @@ namespace Butterfly.Core.Database {
         ///     or just ignore if <paramref name="ignoreIfDuplicate"/> is false
         /// </param>
         /// <returns>Primary key value (semi-colon delimited string if multi-field primary key)</returns>
-        Task<T> InsertAsync<T>(string insertStatement, dynamic vars, bool ignoreIfDuplicate = false);
+        Task<T> InsertAsync<T>(string insertStatement, dynamic vars = null, bool ignoreIfDuplicate = false);
 
         Task<object> InsertAsync(InsertStatement insertStatement, dynamic vars, bool ignoreIfDuplicate = false);
 
@@ -396,16 +396,7 @@ namespace Butterfly.Core.Database {
         /// </param>
         /// <returns>Number of records deleted</returns>
         Task<int> DeleteAsync(string deleteStatement, dynamic vars);
-
-        /// <summary>
-        /// Creates a new <see cref="ITransaction"/> instance.  An <see cref="ITransaction"/> instance allows performing an atomic set of modifications to the database.  Must execute <see cref="ITransaction.CommitAsync"/> to save the transaction changes.  Disposing the transaction without committing rolls back the changes.
-        /// </summary>
-        /// <returns>An <see cref="ITransaction"/> instance (can then call InsertAsync(), UpdateAsync(), or DeleteAsync() on the ITransaction instance to make changes on the transaction)/></returns>
-        ITransaction BeginTransaction();
-
-        /// <inheritdoc cref="BeginTransaction"/>
-        Task<ITransaction> BeginTransactionAsync();
-
+        
         /// <summary>
         /// Allows specifying a lambda that creates a default value for a field when executing an INSERT.  If <paramref name="tableName"/> is null, the <paramref name="getValue"/> lambda will be applied to all tables.
         /// </summary>

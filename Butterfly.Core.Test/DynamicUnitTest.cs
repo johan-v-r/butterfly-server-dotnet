@@ -13,6 +13,7 @@ using Butterfly.Core.Database.Dynamic;
 using Butterfly.Core.Database.Event;
 
 using Dict = System.Collections.Generic.Dictionary<string, object>;
+using System.Transactions;
 
 namespace Butterfly.Core.Test {
     [TestClass]
@@ -53,13 +54,13 @@ namespace Butterfly.Core.Test {
                 // Confirm that an insert event is created
                 dataEventTransactionCollector.Clear();
                 string joeSalesEmployeeId;
-                using (ITransaction transaction = await database.BeginTransactionAsync()) {
+                using (var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled)) {
                     // Add Joe Sales employee
-                    joeSalesEmployeeId = await transaction.InsertAsync<string>("employee", new {
+                    joeSalesEmployeeId = await database.InsertAsync<string>("employee", new {
                         name = "Joe Sales",
                         department_id = salesDepartmentId,
                     });
-                    await transaction.CommitAsync();
+                    transaction.Complete();
                 }
                 await Task.Delay(50);
                 Assert.AreEqual(insertCount, dataEventTransactionCollector.Count);
@@ -70,13 +71,13 @@ namespace Butterfly.Core.Test {
 
                 // Confirm that an update event is created
                 dataEventTransactionCollector.Clear();
-                using (ITransaction transaction = await database.BeginTransactionAsync()) {
+                using (var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled)) {
                     // Update Joe Sales employee
-                    await transaction.UpdateAsync($"UPDATE employee SET {updateField}=@{updateField} WHERE id=@id", new Dict {
+                    await database.UpdateAsync($"UPDATE employee SET {updateField}=@{updateField} WHERE id=@id", new Dict {
                         ["id"] = joeSalesEmployeeId,
                         [updateField] = updateValue
                     });
-                    await transaction.CommitAsync();
+                    transaction.Complete();
                 }
                 await Task.Delay(50);
                 Assert.AreEqual(updateCount, dataEventTransactionCollector.Count);
@@ -88,12 +89,12 @@ namespace Butterfly.Core.Test {
 
                 // Confirm that a delete event is created
                 dataEventTransactionCollector.Clear();
-                using (ITransaction transaction = await database.BeginTransactionAsync()) {
+                using (var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled)) {
                     // Delete Joe Sales employee
-                    await transaction.DeleteAsync("DELETE FROM employee WHERE id=@id", new {
+                    await database.DeleteAsync("DELETE FROM employee WHERE id=@id", new {
                         id = joeSalesEmployeeId,
                     });
-                    await transaction.CommitAsync();
+                    transaction.Complete();
                 }
                 await Task.Delay(50);
                 Assert.AreEqual(deleteCount, dataEventTransactionCollector.Count);

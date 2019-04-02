@@ -88,8 +88,8 @@ namespace Butterfly.Core.Auth {
             return authToken;
         }
 
-        public Task<string> InsertAsync(ITransaction transaction, string userId, DateTime expiresAt) {
-            return transaction.InsertAsync<string>(this.authTokenTableName, new Dict {
+        public Task<string> InsertAsync(string userId, DateTime expiresAt) {
+            return database.InsertAsync<string>(this.authTokenTableName, new Dict {
                 { this.authTokenTableUserIdFieldName, userId },
                 { this.authTokenTableExpiresAtFieldName, expiresAt },
             });

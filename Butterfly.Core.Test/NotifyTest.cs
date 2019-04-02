@@ -9,6 +9,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 using Butterfly.Core.Util;
 using Butterfly.Core.Database;
+using System.Transactions;
 
 namespace Butterfly.Core.Notify.Test {
     [TestClass]
@@ -33,9 +34,9 @@ namespace Butterfly.Core.Notify.Test {
             var notifyMessageManager = new NotifyManager(database, emailNotifyMessageSender: notifyMessageSender);
             notifyMessageManager.Start();
             var notifyMessage = new NotifyMessage("kent@fireshark.com", "kent13304@yahoo.com", "Test SES", "Just testing", null);
-            using (ITransaction transaction = await database.BeginTransactionAsync()) {
-                await notifyMessageManager.Queue(transaction, notifyMessage);
-                await transaction.CommitAsync();
+            using (var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled)) {
+                await notifyMessageManager.Queue(notifyMessage);
+                transaction.Complete();
             }
             await Task.Delay(200000);
         }
@@ -50,8 +51,8 @@ namespace Butterfly.Core.Notify.Test {
             var notifyMessageManager = new NotifyManager(database, phoneNotifyMessageSender: notifyMessageSender);
             notifyMessageManager.Start();
             var notifyMessage = new NotifyMessage("+1 316 712 7412", "+1 316 555 1212", null, "Just testing", null);
-            using (ITransaction transaction = await database.BeginTransactionAsync()) {
-                await notifyMessageManager.Queue(transaction, notifyMessage);
+            using (var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled)) {
+                await notifyMessageManager.Queue(notifyMessage);
             }
             await Task.Delay(200000);
         }

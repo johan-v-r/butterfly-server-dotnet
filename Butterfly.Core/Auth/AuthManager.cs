@@ -17,6 +17,7 @@ using Butterfly.Core.Util.Field;
 using Butterfly.Core.WebApi;
 
 using Dict = System.Collections.Generic.Dictionary<string, object>;
+using System.Transactions;
 
 namespace Butterfly.Core.Auth {
     /// <summary>
@@ -506,8 +507,8 @@ namespace Butterfly.Core.Auth {
         /// <returns>An  <see cref="AuthToken"/> instance created</returns>
         public async Task<AuthToken> CreateAnonymousUserAsync() {
             Random random = new Random();
-            using (ITransaction transaction = await this.database.BeginTransactionAsync()) {
-                string accountId = await transaction.InsertAsync<string>(this.accountTableName);
+            using (var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled)) {
+                string accountId = await database.InsertAsync<string>(this.accountTableName);
                 string role = this.defaultRole;
 
                 var firstName = CleverNameX.COLORS[random.Next(0, CleverNameX.COLORS.Length)];
@@ -520,12 +521,12 @@ namespace Butterfly.Core.Auth {
                 if (!string.IsNullOrEmpty(this.userTableRoleFieldName) && !string.IsNullOrEmpty(role)) {
                     user[this.userTableRoleFieldName] = role;
                 }
-                string userId = await transaction.InsertAsync<string>(this.userTableName, user);
+                string userId = await database.InsertAsync<string>(this.userTableName, user);
 
                 DateTime expiresAt = DateTime.Now.AddDays(this.authTokenDurationDays);
-                string id = await this.userRefTokenAuthenticator.InsertAsync(transaction, userId, expiresAt);
+                string id = await this.userRefTokenAuthenticator.InsertAsync(userId, expiresAt);
 
-                await transaction.CommitAsync();
+                transaction.Complete();
 
                 return new UserRefToken(id, userId, null, role, accountId, expiresAt);
             }
@@ -548,9 +549,9 @@ namespace Butterfly.Core.Auth {
 
             string id;
             DateTime expiresAt = DateTime.Now.AddDays(this.authTokenDurationDays);
-            using (ITransaction transaction = await this.database.BeginTransactionAsync()) {
-                id = await this.userRefTokenAuthenticator.InsertAsync(transaction, userId, expiresAt);
-                await transaction.CommitAsync();
+            using (var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled)) {
+                id = await this.userRefTokenAuthenticator.InsertAsync(userId, expiresAt);
+                transaction.Complete();
             }
 
             string username = string.IsNullOrEmpty(this.userTableUsernameFieldName) ? null : user.GetAs(this.userTableUsernameFieldName, (string)null);

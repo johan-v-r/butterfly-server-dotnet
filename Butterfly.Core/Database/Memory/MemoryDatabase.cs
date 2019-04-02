@@ -32,11 +32,7 @@ namespace Butterfly.Core.Database.Memory {
             return null;
         }
         protected readonly HashSet<MemoryTable> ChangedTables = new HashSet<MemoryTable>();
-
-        protected override BaseTransaction CreateTransaction() {
-            return new MemoryTransaction(this);
-        }
-
+        
         protected override Task<Dict[]> DoSelectRowsAsync(string executableSql, Dict executableParams, int limit) {
             SelectStatement executableStatement = new SelectStatement(this, executableSql);
             if (executableStatement.StatementFromRefs.Length > 1) throw new Exception("MemoryTable does not support joins");
@@ -201,6 +197,29 @@ namespace Butterfly.Core.Database.Memory {
 
             AddChangeTable(memoryTable);
             return Task.FromResult(dataRows.Length);
+        }
+
+        protected override bool DoCreate(CreateStatement statement) {
+            var dataTable = new DataTable(statement.TableName);
+
+            foreach (var fieldDef in statement.FieldDefs) {
+                DataColumn dataColumn = new DataColumn(fieldDef.name, fieldDef.type) {
+                    AutoIncrement = fieldDef.isAutoIncrement,
+                    AllowDBNull = fieldDef.allowNull
+                };
+                dataTable.Columns.Add(dataColumn);
+            }
+
+            dataTable.PrimaryKey = Array.ConvertAll(statement.Indexes[0].FieldNames, x => dataTable.Columns[x]);
+
+            Table table = new MemoryTable(dataTable, statement.FieldDefs, statement.Indexes);
+            this.TableByName.Add(table.Name, table);
+
+            return true;
+        }
+
+        protected override Task<bool> DoCreateAsync(CreateStatement statement) {
+            return Task.FromResult(this.DoCreate(statement));
         }
 
         private void AddChangeTable(MemoryTable table)

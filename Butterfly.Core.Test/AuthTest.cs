@@ -11,6 +11,7 @@ using NLog;
 using Butterfly.Core.Auth;
 using Butterfly.Core.Database;
 using Butterfly.Core.Util;
+using System.Transactions;
 
 namespace Butterfly.Core.Test {
     [TestClass]
@@ -48,11 +49,11 @@ namespace Butterfly.Core.Test {
         }
 
         public static async Task TruncateData(IDatabase database) {
-            using (ITransaction transaction = await database.BeginTransactionAsync()) {
+            using (var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled)) {
                 foreach (var tableName in database.TableByName.Keys) {
-                    await transaction.TruncateAsync(tableName);
+                    await database.TruncateAsync(tableName);
                 }
-                await transaction.CommitAsync();
+                transaction.Complete();
             }
         }
 

@@ -17,6 +17,7 @@ using Butterfly.Core.Database.Event;
 using Butterfly.Core.Util;
 
 using Dict = System.Collections.Generic.Dictionary<string, object>;
+using System.Transactions;
 
 namespace Butterfly.Core.Database {
 
@@ -91,19 +92,19 @@ namespace Butterfly.Core.Database {
             var sqlParts = noCommentSql.Split(';').Select(x => x.Trim()).Where(x => !string.IsNullOrEmpty(x));
 
             List<string> tableSchemasToLoad = new List<string>();
-            using (var transaction = await this.BeginTransactionAsync() as BaseTransaction) {
+            using (var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled)) {
                 foreach (var sqlPart in sqlParts) {
                     if (!string.IsNullOrWhiteSpace(sqlPart)) {
                         CreateStatement statement = this.CreateStatement(sqlPart);
                         if (!this.TableByName.Keys.Contains(statement.TableName)) {
-                            bool tableSchemaLoaded = await transaction.CreateAsync(statement);
+                            bool tableSchemaLoaded = await CreateAsync(statement);
                             if (!tableSchemaLoaded) {
                                 tableSchemasToLoad.Add(statement.TableName);
                             }
                         }
                     }
                 }
-                await transaction.CommitAsync();
+                transaction.Complete();
             }
 
             foreach (var tableName in tableSchemasToLoad) {
@@ -111,6 +112,14 @@ namespace Butterfly.Core.Database {
                 this.tableByName[table.Name] = table;
             }
         }
+
+        protected abstract bool DoCreate(CreateStatement statement);
+
+        public async Task<bool> CreateAsync(CreateStatement statement) {
+            return await this.DoCreateAsync(statement);
+        }
+
+        protected abstract Task<bool> DoCreateAsync(CreateStatement statement);
 
         protected virtual CreateStatement CreateStatement(string sql) {
             return new CreateStatement(sql);
@@ -244,13 +253,9 @@ namespace Butterfly.Core.Database {
         protected abstract Task<Dict[]> DoQueryRowsAsync(string storedProcedureName, Dict executableParams);
         
         // Insert methods
+        [Obsolete("Replaced with InsertAsync")]
         public async Task<T> InsertAndCommitAsync<T>(string insertStatement, dynamic vars, bool ignoreIfDuplicate = false) {
-            T result;
-            using (var transaction = await this.BeginTransactionAsync()) {
-                result = await transaction.InsertAsync<T>(insertStatement, vars, ignoreIfDuplicate);
-                await transaction.CommitAsync();
-            }
-            return result;
+            return await InsertAsync<T>(insertStatement, vars, ignoreIfDuplicate);
         }
         
         public async Task<T> InsertAsync<T>(string insertStatement, dynamic vars, bool ignoreIfDuplicate = false)
@@ -300,19 +305,16 @@ namespace Butterfly.Core.Database {
 
             InsertCount++;
 
+            await DispatchDataEventTransactions();
             return keyValue;
         }
 
         protected abstract Task<Func<object>> DoInsertAsync(string executableSql, Dict executableParams, bool ignoreIfDuplicate);
 
         // Update methods
+        [Obsolete("Replaced with UpdateAsync")]
         public async Task<int> UpdateAndCommitAsync(string updateStatement, dynamic vars) {
-            int count;
-            using (var transaction = await this.BeginTransactionAsync()) {
-                count = await transaction.UpdateAsync(updateStatement, vars);
-                await transaction.CommitAsync();
-            }
-            return count;
+            return await UpdateAsync(updateStatement, vars);
         }
 
         public async Task<int> UpdateAsync(string updateStatement, dynamic vars) {
@@ -343,19 +345,16 @@ namespace Butterfly.Core.Database {
                 UpdateCount++;
             }
 
+            await DispatchDataEventTransactions();
             return count;
         }
 
         protected abstract Task<int> DoUpdateAsync(string executableSql, Dict executableParams);
 
         // Delete methods
+        [Obsolete("Replaced with DeleteAsync")]
         public async Task<int> DeleteAndCommitAsync(string deleteStatement, dynamic vars) {
-            int count;
-            using (var transaction = await this.BeginTransactionAsync()) {
-                count = await transaction.DeleteAsync(deleteStatement, vars);
-                await transaction.CommitAsync();
-            }
-            return count;
+            return await DeleteAsync(deleteStatement, vars);
         }
 
         public async Task<int> DeleteAsync(string deleteStatement, dynamic vars) {
@@ -384,6 +383,7 @@ namespace Butterfly.Core.Database {
                 DeleteCount++;
             }
 
+            await DispatchDataEventTransactions();
             return count;
         }
 
@@ -396,21 +396,7 @@ namespace Butterfly.Core.Database {
         }
 
         protected abstract Task DoTruncateAsync(string tableName);
-
-        public ITransaction BeginTransaction() {
-            var transaction = this.CreateTransaction();
-            transaction.Begin();
-            return transaction;
-        }
-
-        public async Task<ITransaction> BeginTransactionAsync() {
-            var transaction = this.CreateTransaction();
-            await transaction.BeginAsync();
-            return transaction;
-        }
-
-        protected abstract BaseTransaction CreateTransaction();
-
+        
         protected readonly Dictionary<string, Func<string, object>> getDefaultValueByFieldName = new Dictionary<string, Func<string, object>>();
 
         public void SetDefaultValue(string fieldName, Func<string, object> getValue, string tableName = null) {
@@ -609,6 +595,38 @@ namespace Butterfly.Core.Database {
                 throw new Exception("Cannot parse key value that is not a string and keyFieldNames.Length!=1");
             }
             return result;
+        }
+
+        private async Task DispatchDataEventTransactions() {
+            if (Transaction.Current == null) {
+                await CommitAsync();
+                return;
+            }
+
+            Transaction.Current.TransactionCompleted += async (object sender, TransactionEventArgs e) => {
+                if (e.Transaction.TransactionInformation.Status == TransactionStatus.Committed)
+                    await CommitAsync();
+            };
+        }
+        
+        private async Task CommitAsync() {
+            DataEventTransaction dataEventTransaction = this.dataEvents.Count > 0 ? new DataEventTransaction(DateTime.Now, this.dataEvents.ToArray()) : null;
+            if (dataEventTransaction != null) {
+                //await PostDataEventTransactionAsync(TransactionState.Uncommitted, dataEventTransaction);
+                await PostDataEventTransactionAsync(TransactionState.Committed, dataEventTransaction);
+                
+                // remove events as they're posted
+                dataEvents.RemoveAll(e => dataEventTransaction.dataEvents.Contains(e));
+            }
+            
+            // unsure if still used
+            //HashSet<string> onCommitKeys = new HashSet<string>();
+            //foreach (var onCommitRef in this.onCommitRefs) {
+            //    if (onCommitRef.key == null || !onCommitKeys.Contains(onCommitRef.key)) {
+            //        await onCommitRef.onCommit();
+            //        if (onCommitRef.key != null) onCommitKeys.Add(onCommitRef.key);
+            //    }
+            //}
         }
     }
 

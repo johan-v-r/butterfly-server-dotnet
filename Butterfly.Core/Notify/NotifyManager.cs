@@ -15,6 +15,7 @@ using Butterfly.Core.Util.Field;
 using Butterfly.Core.WebApi;
 
 using Dict = System.Collections.Generic.Dictionary<string, object>;
+using System.Transactions;
 
 namespace Butterfly.Core.Notify {
 
@@ -88,16 +89,16 @@ namespace Butterfly.Core.Notify {
                 contact = scrubbedContact
             });
 
-            using (ITransaction transaction = await this.database.BeginTransactionAsync()) {
+            using (var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled)) {
                 if (id == null) {
-                    await transaction.InsertAsync<string>(this.notifyVerifyTableName, new {
+                    await database.InsertAsync<string>(this.notifyVerifyTableName, new {
                         contact = scrubbedContact,
                         verify_code = code,
                         expires_at = expiresAt,
                     });
                 }
                 else {
-                    await transaction.UpdateAsync(this.notifyVerifyTableName, new {
+                    await database.UpdateAsync(this.notifyVerifyTableName, new {
                         id,
                         verify_code = code,
                         expires_at = expiresAt,
@@ -121,9 +122,9 @@ namespace Butterfly.Core.Notify {
                     contact = scrubbedContact,
                     code = code.ToString(this.verifyCodeFormat)
                 });
-                await this.Queue(transaction, evaluatedNotifyMessage);
+                await this.Queue(evaluatedNotifyMessage);
 
-                await transaction.CommitAsync();
+                transaction.Complete();
             }
         }
 
@@ -158,7 +159,7 @@ namespace Butterfly.Core.Notify {
         /// <param name="transaction"></param>
         /// <param name="notifyMessages"></param>
         /// <returns></returns>
-        public async Task Queue(ITransaction transaction, params NotifyMessage[] notifyMessages) {
+        public async Task Queue(params NotifyMessage[] notifyMessages) {
             bool emailQueued = false;
             bool phoneTextQueued = false;
             foreach (var notifyMessage in notifyMessages) {
@@ -174,22 +175,38 @@ namespace Butterfly.Core.Notify {
                 switch (notifyMessageType) {
                     case NotifyMessageType.Email:
                         if (this.emailNotifyMessageEngine == null) throw new Exception("No email message sender configured");
-                        await this.emailNotifyMessageEngine.Queue(transaction, scrubbedFrom, scrubbedTo, notifyMessage.subject, notifyMessage.bodyText, notifyMessage.bodyHtml, notifyMessage.priority, notifyMessage.extraData);
+                        await this.emailNotifyMessageEngine.Queue(scrubbedFrom, scrubbedTo, notifyMessage.subject, notifyMessage.bodyText, notifyMessage.bodyHtml, notifyMessage.priority, notifyMessage.extraData);
                         emailQueued = true;
                         break;
                     case NotifyMessageType.PhoneText:
                         if (this.phoneNotifyMessageEngine == null) throw new Exception("No phone text message sender configured");
-                        await this.phoneNotifyMessageEngine.Queue(transaction, scrubbedFrom, scrubbedTo, notifyMessage.subject, notifyMessage.bodyText, notifyMessage.bodyHtml, notifyMessage.priority, notifyMessage.extraData);
+                        await this.phoneNotifyMessageEngine.Queue(scrubbedFrom, scrubbedTo, notifyMessage.subject, notifyMessage.bodyText, notifyMessage.bodyHtml, notifyMessage.priority, notifyMessage.extraData);
                         phoneTextQueued = true;
                         break;
                 }
             }
+            
+            if (Transaction.Current == null) {
+                // notify immediately
+                SendNotifications(emailQueued, phoneTextQueued);
+            }
+            else {
+                // execution wrapped in transaction, wait for commit
+                Transaction.Current.TransactionCompleted += (object sender, TransactionEventArgs e) => {
+                    if (e.Transaction.TransactionInformation.Status == TransactionStatus.Committed) {
+                        SendNotifications(emailQueued, phoneTextQueued);
+                    }
+                };
+            }
+        }
 
-            transaction.OnCommit(() => {
-                if (emailQueued) this.emailNotifyMessageEngine.Pulse();
-                if (phoneTextQueued) this.phoneNotifyMessageEngine.Pulse();
-                return Task.FromResult(0);
-            });
+        private void SendNotifications(bool emailQueued, bool phoneTextQueued) {
+            if (emailQueued) this.emailNotifyMessageEngine.Pulse();
+            if (phoneTextQueued) this.phoneNotifyMessageEngine.Pulse();
+        }
+
+        private void Current_TransactionCompleted(object sender, TransactionEventArgs e) {
+            throw new NotImplementedException();
         }
 
         protected NotifyMessageType DetectNotifyMessageType(string to) {
@@ -227,10 +244,10 @@ namespace Butterfly.Core.Notify {
                 this.Pulse();
             }
 
-            public async Task Queue(ITransaction transaction, string from, string to, string subject, string bodyText, string bodyHtml, byte priority, Dict extraData) {
+            public async Task Queue(string from, string to, string subject, string bodyText, string bodyHtml, byte priority, Dict extraData) {
                 logger.Debug($"Queue():type={this.notifyMessageType},priority={priority},from={from},to={to},subject={subject}");
                 string extraJson = extraData != null && extraData.Count > 0 ? JsonUtil.Serialize(extraData) : null;
-                await transaction.InsertAsync<string>(this.notifyMessageTableName, new {
+                await database.InsertAsync<string>(this.notifyMessageTableName, new {
                     message_type = (byte)this.notifyMessageType,
                     message_priority = priority,
                     message_from = from,
