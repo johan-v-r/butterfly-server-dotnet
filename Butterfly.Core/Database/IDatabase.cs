@@ -244,6 +244,9 @@ namespace Butterfly.Core.Database {
         /// <returns>Primary key value (semi-colon delimited string if multi-field primary key)</returns>
         Task<T> InsertAndCommitAsync<T>(string insertStatement, dynamic vars = null, bool ignoreIfDuplicate = false);
 
+        Task<T> InsertAsync<T>(string insertStatement, dynamic vars, bool ignoreIfDuplicate = false);
+        Task<object> InsertAsync(InsertStatement insertStatement, dynamic vars, bool ignoreIfDuplicate = false);
+
         /// <summary>
         /// Executes an UPDATE statement as a single transaction
         /// </summary>
@@ -366,6 +369,12 @@ namespace Butterfly.Core.Database {
         /// <param name="statementParams"></param>
         /// <returns></returns>
         Task<DataEvent[]> GetInitialDataEventsAsync(string dataEventName, string[] keyFieldNames, SelectStatement selectStatement, dynamic statementParams = null);
-
+        
+        /// <summary>
+        /// Truncate a table (deletes all records)
+        /// </summary>
+        /// <param name="tableName"></param>
+        /// <returns></returns>
+        Task TruncateAsync(string tableName);
     }
 }

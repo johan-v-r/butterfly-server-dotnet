@@ -13,6 +13,7 @@ using Butterfly.Core.Database.Event;
 using Butterfly.Core.Util;
 
 using Dict = System.Collections.Generic.Dictionary<string, object>;
+using System.Transactions;
 
 namespace Butterfly.Core.Test {
     [TestClass]
@@ -65,11 +66,11 @@ namespace Butterfly.Core.Test {
         }
 
         public static async Task TruncateData(IDatabase database) {
-            using (ITransaction transaction = await database.BeginTransactionAsync()) {
+            using (var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled)) {
                 foreach (var tableName in database.TableByName.Keys) {
-                    await transaction.TruncateAsync(tableName);
+                    await database.TruncateAsync(tableName);
                 }
-                await transaction.CommitAsync();
+                transaction.Complete();
             }
         }
 
@@ -144,16 +145,16 @@ namespace Butterfly.Core.Test {
         }
 
         protected static async Task TestTransactions(IDatabase database) {
-            using (ITransaction transaction = await database.BeginTransactionAsync()) {
+            using (var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled)) {
                 // Add Sales department
-                await transaction.InsertAsync<string>("department", new {
+                await database.InsertAsync<string>("department", new {
                     name = "Sales",
                 });
 
                 Dict[] allDepartments1 = await database.SelectRowsAsync("SELECT * FROM department");
                 Assert.AreEqual(0, allDepartments1.Length);
 
-                transaction.Rollback();
+                // implicit rollback
             }
 
             Dict[] allDepartments2 = await database.SelectRowsAsync("SELECT * FROM department");

@@ -121,6 +121,8 @@ namespace Butterfly.Core.Database {
         protected abstract Task<Table> LoadTableSchemaAsync(string tableName);
 
         // Manage data event transaction listeners
+        protected readonly List<KeyValueDataEvent> dataEvents = new List<KeyValueDataEvent>();
+
         protected readonly List<DataEventTransactionListener> uncommittedTransactionListeners = new List<DataEventTransactionListener>();
         public IDisposable OnNewUncommittedTransaction(Action<DataEventTransaction> listener) => new ListItemDisposable<DataEventTransactionListener>(uncommittedTransactionListeners, new DataEventTransactionListener(listener));
         public IDisposable OnNewUncommittedTransaction(Func<DataEventTransaction, Task> listener) => new ListItemDisposable<DataEventTransactionListener>(uncommittedTransactionListeners, new DataEventTransactionListener(listener));
@@ -240,7 +242,8 @@ namespace Butterfly.Core.Database {
         }
 
         protected abstract Task<Dict[]> DoQueryRowsAsync(string storedProcedureName, Dict executableParams);
-
+        
+        // Insert methods
         public async Task<T> InsertAndCommitAsync<T>(string insertStatement, dynamic vars, bool ignoreIfDuplicate = false) {
             T result;
             using (var transaction = await this.BeginTransactionAsync()) {
@@ -249,6 +252,58 @@ namespace Butterfly.Core.Database {
             }
             return result;
         }
+        
+        public async Task<T> InsertAsync<T>(string insertStatement, dynamic vars, bool ignoreIfDuplicate = false)
+        {
+            InsertStatement statement = new InsertStatement(this, insertStatement);
+            object result = await this.InsertAsync(statement, vars, ignoreIfDuplicate: ignoreIfDuplicate);
+            return (T)Convert.ChangeType(result, typeof(T));
+        }
+
+        public async Task<object> InsertAsync(InsertStatement insertStatement, dynamic vars, bool ignoreIfDuplicate = false)
+        {
+            // Convert statementParams
+            Dict varsDict = insertStatement.ConvertParamsToDict(vars);
+            PreprocessInput(insertStatement.StatementFromRefs[0].table.Name, varsDict);
+            Dict varsOverrides = GetOverrideValues(insertStatement.StatementFromRefs[0].table);
+            varsDict.UpdateFrom(varsOverrides);
+            Dict varsDefaults = GetDefaultValues(insertStatement.StatementFromRefs[0].table);
+
+            // Get the executable sql and params
+            (string executableSql, Dict executableParams) = insertStatement.GetExecutableSqlAndParams(varsDict, varsDefaults);
+
+            // Execute insert and return getGenerateId lambda
+            Func<object> getGeneratedId;
+            try
+            {
+                getGeneratedId = await this.DoInsertAsync(executableSql, executableParams, ignoreIfDuplicate);
+            }
+            catch (DuplicateKeyDatabaseException)
+            {
+                if (ignoreIfDuplicate) return null;
+                throw;
+            }
+
+            // Determine keyValue (either keyValue is from a generated id or was included in the statement params)
+            object keyValue;
+            if (insertStatement.StatementFromRefs[0].table.AutoIncrementFieldName != null && getGeneratedId != null)
+            {
+                keyValue = getGeneratedId();
+            }
+            else
+            {
+                keyValue = BaseDatabase.GetKeyValue(insertStatement.StatementFromRefs[0].table.Indexes[0].FieldNames, executableParams);
+            }
+
+            // Create data event
+            this.dataEvents.Add(new KeyValueDataEvent(DataEventType.Insert, insertStatement.StatementFromRefs[0].table.Name, keyValue));
+
+            InsertCount++;
+
+            return keyValue;
+        }
+
+        protected abstract Task<Func<object>> DoInsertAsync(string executableSql, Dict executableParams, bool ignoreIfDuplicate);
 
         public async Task<int> UpdateAndCommitAsync(string updateStatement, dynamic vars) {
             int count;
@@ -267,6 +322,14 @@ namespace Butterfly.Core.Database {
             }
             return count;
         }
+
+        // Truncate methods
+        public async Task TruncateAsync(string tableName)
+        {
+            await this.DoTruncateAsync(tableName);
+        }
+
+        protected abstract Task DoTruncateAsync(string tableName);
 
         public ITransaction BeginTransaction() {
             var transaction = this.CreateTransaction();

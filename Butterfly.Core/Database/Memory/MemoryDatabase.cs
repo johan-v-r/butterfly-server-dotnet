@@ -9,7 +9,7 @@ using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-
+using System.Transactions;
 using NLog;
 
 using Dict = System.Collections.Generic.Dictionary<string, object>;
@@ -31,6 +31,7 @@ namespace Butterfly.Core.Database.Memory {
         protected override Task<Table> LoadTableSchemaAsync(string tableName) {
             return null;
         }
+        protected readonly HashSet<MemoryTable> ChangedTables = new HashSet<MemoryTable>();
 
         protected override BaseTransaction CreateTransaction() {
             return new MemoryTransaction(this);
@@ -132,6 +133,66 @@ namespace Butterfly.Core.Database.Memory {
             }
             sb.Append(sql.Substring(lastIndex));
             return sb.ToString();
+        }
+
+        protected override Task<Func<object>> DoInsertAsync(string executableSql, Dict executableParams, bool ignoreIfDuplicate)
+        {
+            InsertStatement executableStatement = new InsertStatement(this, executableSql);
+            var memoryTable = executableStatement.StatementFromRefs[0].table as MemoryTable;
+
+            var insertRefs = executableStatement.GetInsertRefs(executableParams);
+            var fieldValues = BaseStatement.RemapStatementParamsToFieldValues(executableParams, insertRefs);
+
+            var dataRow = memoryTable.DataTable.NewRow();
+            foreach (var nameValuePair in fieldValues)
+            {
+                dataRow[nameValuePair.Key] = nameValuePair.Value;
+            }
+            memoryTable.DataTable.Rows.Add(dataRow);
+
+            AddChangeTable(memoryTable);
+
+            if (memoryTable.AutoIncrementFieldName == null)
+            {
+                return Task.FromResult<Func<object>>(null);
+            }
+            else
+            {
+                return Task.FromResult<Func<object>>(() => dataRow[memoryTable.AutoIncrementFieldName]);
+            }
+        }
+
+        private void AddChangeTable(MemoryTable table)
+        {
+            if (Transaction.Current == null) {
+                // no transaction, so accept and complete
+                table.DataTable.AcceptChanges();
+                return;
+            }
+
+            ChangedTables.Add(table);
+
+            // only add the event the first time
+            if (ChangedTables.Count == 1)
+                Transaction.Current.TransactionCompleted += Current_TransactionCompleted;
+        }
+
+        private void Current_TransactionCompleted(object sender, TransactionEventArgs e)
+        {
+            foreach (var changedTable in ChangedTables) {
+                if (e.Transaction.TransactionInformation.Status == TransactionStatus.Committed)
+                    changedTable.DataTable.AcceptChanges();
+                else
+                    changedTable.DataTable.RejectChanges();
+            }
+        }
+
+        protected override Task DoTruncateAsync(string tableName)
+        {
+            if (!TableByName.TryGetValue(tableName, out Table table)) throw new Exception($"Invalid table name '{tableName}'");
+            if (!(table is MemoryTable memoryTable)) throw new Exception($"Invalid table type {table.GetType()}");
+            memoryTable.DataTable.Clear();
+            return Task.FromResult(0);
         }
     }
 }
