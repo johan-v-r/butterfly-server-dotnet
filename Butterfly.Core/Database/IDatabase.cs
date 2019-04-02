@@ -244,7 +244,41 @@ namespace Butterfly.Core.Database {
         /// <returns>Primary key value (semi-colon delimited string if multi-field primary key)</returns>
         Task<T> InsertAndCommitAsync<T>(string insertStatement, dynamic vars = null, bool ignoreIfDuplicate = false);
 
+        /// <summary>
+        /// Executes an INSERT statement
+        /// </summary>
+        /// <remarks>
+        /// Do an INSERT using the table name and an anonymous type...
+        /// <code>
+        /// await database.InsertAsync("message", new {
+        ///     text = "Hello",
+        ///     owner_id = "123",
+        /// });
+        /// </code>
+        /// Do an INSERT using a full statement and a Dictionary...
+        /// <code>
+        /// await database.InsertAsync("INSERT INTO message (text, owner_id) VALUES (@t, @oid)", new Dictionary&lt;string, object&gt; {
+        ///     ["t"] = "Hello",
+        ///     ["oid"] = "123",
+        /// });
+        /// </code>
+        /// </remarks>
+        /// <param name="insertStatement">
+        ///     Either a table name or a full INSERT statement with vars prefixed by @ (like <code>@name</code>)
+        /// </param>
+        /// <param name="vars">
+        ///     Either an anonymous type or a Dictionary. 
+        ///     If <paramref name="insertStatement"/> is a table name, the <paramref name="vars"/> values will be used to build the UPDATE statement.
+        ///     If <paramref name="insertStatement"/> is a full INSERT statement, there must be one entry for each var referenced in <paramref name="insertStatement"/>.
+        /// </param>
+        /// <param name="ignoreIfDuplicate">
+        ///     If the INSERT attempts to duplicate the primary key then either 
+        ///     throw an <see cref="DuplicateKeyDatabaseException"/> error if <paramref name="ignoreIfDuplicate"/> is true
+        ///     or just ignore if <paramref name="ignoreIfDuplicate"/> is false
+        /// </param>
+        /// <returns>Primary key value (semi-colon delimited string if multi-field primary key)</returns>
         Task<T> InsertAsync<T>(string insertStatement, dynamic vars, bool ignoreIfDuplicate = false);
+
         Task<object> InsertAsync(InsertStatement insertStatement, dynamic vars, bool ignoreIfDuplicate = false);
 
         /// <summary>
@@ -278,7 +312,7 @@ namespace Butterfly.Core.Database {
         Task<int> UpdateAndCommitAsync(string updateStatement, dynamic vars);
 
         /// <summary>
-        /// Executes an UPDATE statement within this transaction
+        /// Executes an UPDATE statement
         /// </summary>
         /// <remarks>
         /// Do an UPDATE using the table name and an anonymous type...
@@ -334,6 +368,34 @@ namespace Butterfly.Core.Database {
         /// </param>
         /// <returns>Number of records deleted</returns>
         Task<int> DeleteAndCommitAsync(string deleteStatement, dynamic vars);
+
+        /// <summary>
+        /// Executes a DELETE statement
+        /// </summary>
+        /// <remarks>
+        /// Do a DELETE using the table name and an anonymous type...
+        /// <code>
+        /// await database.DeleteAsync("message", new {
+        ///     id = 123
+        /// });
+        /// </code>
+        /// Do a DELETE using a full statement and a Dictionary...
+        /// <code>
+        /// await database.DeleteAsync("DELETE FROM message WHERE id=@id", new Dictionary&lt;string, object&gt; {
+        ///     ["id"] = 123
+        /// });
+        /// </code>
+        /// </remarks>
+        /// <param name="deleteStatement">
+        ///     Either a table name or a full DELETE statement with vars prefixed by @ (like <code>@name</code>)
+        /// </param>
+        /// <param name="vars">
+        ///     Either an anonymous type or a Dictionary. 
+        ///     If <paramref name="deleteStatement"/> is a table name, the <paramref name="vars"/> values will be used to build the WHERE clause of the DELETE statement.
+        ///     If <paramref name="deleteStatement"/> is a full DELETE statement, there must be one entry for each var referenced in <paramref name="deleteStatement"/>.
+        /// </param>
+        /// <returns>Number of records deleted</returns>
+        Task<int> DeleteAsync(string deleteStatement, dynamic vars);
 
         /// <summary>
         /// Creates a new <see cref="ITransaction"/> instance.  An <see cref="ITransaction"/> instance allows performing an atomic set of modifications to the database.  Must execute <see cref="ITransaction.CommitAsync"/> to save the transaction changes.  Disposing the transaction without committing rolls back the changes.

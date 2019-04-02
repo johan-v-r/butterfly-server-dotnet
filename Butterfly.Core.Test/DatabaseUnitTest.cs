@@ -59,6 +59,7 @@ namespace Butterfly.Core.Test {
             await TruncateData(database);
             await TestTransactions(database);
             await UpdateWithTransactionTest(database);
+            await DeleteWithTransactionTest(database);
 
             await TruncateData(database);
             (object salesDepartmentId, object hrDepartmentId, object customerServiceDepartmentId) = await InsertBasicData(database);
@@ -205,6 +206,28 @@ namespace Butterfly.Core.Test {
 
             departmentName = await database.SelectValueAsync<string>("SELECT name FROM department WHERE id=@id", new { id });
             Assert.AreEqual(updatedName, departmentName);
+        }
+
+        protected static async Task DeleteWithTransactionTest(IDatabase database) {
+            var id = await database.InsertAsync<string>("department", new { name = "Delete me" });
+
+            using (var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled)) {
+                await database.DeleteAsync("DELETE FROM department WHERE id=@id", new { id });
+
+                // implicit rollback
+            }
+
+            var department = await database.SelectRowAsync("SELECT name FROM department WHERE id=@id", new { id });
+            Assert.IsNotNull(department);
+
+            using (var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled)) {
+                await database.DeleteAsync("DELETE FROM department WHERE id=@id", new { id });
+
+                transaction.Complete();
+            }
+
+            department = await database.SelectRowAsync("SELECT name FROM department WHERE id=@id", new { id });
+            Assert.IsNull(department);
         }
 
         protected static async Task SelectBasicData(IDatabase database, object salesDepartmentId, object hrDepartmentId, object customerServiceDepartmentId) {

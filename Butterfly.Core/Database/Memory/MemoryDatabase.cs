@@ -189,6 +189,20 @@ namespace Butterfly.Core.Database.Memory {
             }
         }
 
+        protected override Task<int> DoDeleteAsync(string executableSql, Dict executableParams) {
+            DeleteStatement executableStatement = new DeleteStatement(this, executableSql);
+            var memoryTable = executableStatement.StatementFromRefs[0].table as MemoryTable;
+
+            string evaluatedWhereClause = MemoryDatabase.EvaluateWhereClause(executableStatement.whereClause, executableParams, executableStatement.StatementFromRefs);
+            var dataRows = memoryTable.DataTable.Select(evaluatedWhereClause);
+            foreach (var dataRow in dataRows) {
+                dataRow.Delete();
+            }
+
+            AddChangeTable(memoryTable);
+            return Task.FromResult(dataRows.Length);
+        }
+
         private void AddChangeTable(MemoryTable table)
         {
             if (Transaction.Current == null) {

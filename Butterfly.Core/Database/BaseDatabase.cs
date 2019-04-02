@@ -348,6 +348,7 @@ namespace Butterfly.Core.Database {
 
         protected abstract Task<int> DoUpdateAsync(string executableSql, Dict executableParams);
 
+        // Delete methods
         public async Task<int> DeleteAndCommitAsync(string deleteStatement, dynamic vars) {
             int count;
             using (var transaction = await this.BeginTransactionAsync()) {
@@ -356,6 +357,37 @@ namespace Butterfly.Core.Database {
             }
             return count;
         }
+
+        public async Task<int> DeleteAsync(string deleteStatement, dynamic vars) {
+            DeleteStatement statement = new DeleteStatement(this, deleteStatement);
+            return await this.DeleteAsync(statement, vars);
+        }
+
+        public async Task<int> DeleteAsync(DeleteStatement deleteStatement, dynamic vars) {
+            Dict varsDict = deleteStatement.ConvertParamsToDict(vars);
+
+            (var whereIndex, var whereRefs) = deleteStatement.GetWhereIndexAndWhereRefs(this, varsDict);
+
+            (string executableSql, Dict executableParams) = deleteStatement.GetExecutableSqlAndParams(varsDict, whereRefs);
+
+            object keyValue = await GetKeyValue(whereIndex, varsDict, executableParams, whereRefs, deleteStatement.StatementFromRefs[0].table.Indexes[0], deleteStatement.StatementFromRefs[0].table.Name);
+
+            int count;
+            if (keyValue == null) {
+                count = 0;
+            }
+            else {
+                count = await this.DoDeleteAsync(executableSql, executableParams);
+
+                dataEvents.Add(new KeyValueDataEvent(DataEventType.Delete, deleteStatement.StatementFromRefs[0].table.Name, keyValue));
+
+                DeleteCount++;
+            }
+
+            return count;
+        }
+
+        protected abstract Task<int> DoDeleteAsync(string executableSql, Dict executableParams);
 
         // Truncate methods
         public async Task TruncateAsync(string tableName)
