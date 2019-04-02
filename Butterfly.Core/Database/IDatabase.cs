@@ -278,6 +278,36 @@ namespace Butterfly.Core.Database {
         Task<int> UpdateAndCommitAsync(string updateStatement, dynamic vars);
 
         /// <summary>
+        /// Executes an UPDATE statement within this transaction
+        /// </summary>
+        /// <remarks>
+        /// Do an UPDATE using the table name and an anonymous type...
+        /// <code>
+        /// await database.UpdateAsync("message", new {
+        ///     id = 123,
+        ///     text = "Hello",
+        /// });
+        /// </code>
+        /// Do an UPDATE using a full statement and a Dictionary...
+        /// <code>
+        /// await database.UpdateAsync("UPDATE message SET text=@t WHERE id=@id", new Dictionary&lt;string, object&gt; {
+        ///     ["id"] = 123,
+        ///     ["t"] = "Hello",
+        /// });
+        /// </code>
+        /// </remarks>
+        /// <param name="updateStatement">
+        ///     Either a table name or a full UPDATE statement with vars prefixed by @ (like <code>@name</code>)
+        /// </param>
+        /// <param name="vars">
+        ///     Either an anonymous type or a Dictionary. 
+        ///     If <paramref name="updateStatement"/> is a table name, the <paramref name="vars"/> values will be used to build the SET clause and WHERE clause of the UPDATE statement.
+        ///     If <paramref name="updateStatement"/> is a full UPDATE statement, there must be one entry for each var referenced in <paramref name="updateStatement"/>.
+        /// </param>
+        /// <returns>Number of records updated</returns>
+        Task<int> UpdateAsync(string updateStatement, dynamic vars);
+
+        /// <summary>
         /// Executes a DELETE statement as a single transaction
         /// </summary>
         /// <remarks>

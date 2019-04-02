@@ -292,7 +292,7 @@ namespace Butterfly.Core.Database {
             }
             else
             {
-                keyValue = BaseDatabase.GetKeyValue(insertStatement.StatementFromRefs[0].table.Indexes[0].FieldNames, executableParams);
+                keyValue = GetKeyValue(insertStatement.StatementFromRefs[0].table.Indexes[0].FieldNames, executableParams);
             }
 
             // Create data event
@@ -305,6 +305,7 @@ namespace Butterfly.Core.Database {
 
         protected abstract Task<Func<object>> DoInsertAsync(string executableSql, Dict executableParams, bool ignoreIfDuplicate);
 
+        // Update methods
         public async Task<int> UpdateAndCommitAsync(string updateStatement, dynamic vars) {
             int count;
             using (var transaction = await this.BeginTransactionAsync()) {
@@ -313,6 +314,39 @@ namespace Butterfly.Core.Database {
             }
             return count;
         }
+
+        public async Task<int> UpdateAsync(string updateStatement, dynamic vars) {
+            UpdateStatement statement = new UpdateStatement(this, updateStatement);
+            return await this.UpdateAsync(statement, vars);
+        }
+
+        public async Task<int> UpdateAsync(UpdateStatement updateStatement, dynamic vars) {
+            Dict varsDict = updateStatement.ConvertParamsToDict(vars);
+            Dict varsOverrides = GetOverrideValues(updateStatement.StatementFromRefs[0].table);
+            varsDict.UpdateFrom(varsOverrides);
+            PreprocessInput(updateStatement.StatementFromRefs[0].table.Name, varsDict);
+
+            (var whereIndex, var setRefs, var whereRefs) = updateStatement.GetWhereIndexSetRefsAndWhereRefs(this, varsDict);
+            (string executableSql, Dict executableParams) = updateStatement.GetExecutableSqlAndParams(varsDict, setRefs, whereRefs);
+
+            object keyValue = await this.GetKeyValue(whereIndex, varsDict, executableParams, whereRefs, updateStatement.StatementFromRefs[0].table.Indexes[0], updateStatement.StatementFromRefs[0].table.Name);
+
+            int count;
+            if (keyValue == null) {
+                count = 0;
+            }
+            else {
+                count = await this.DoUpdateAsync(executableSql, executableParams);
+
+                dataEvents.Add(new KeyValueDataEvent(DataEventType.Update, updateStatement.StatementFromRefs[0].table.Name, keyValue));
+
+                UpdateCount++;
+            }
+
+            return count;
+        }
+
+        protected abstract Task<int> DoUpdateAsync(string executableSql, Dict executableParams);
 
         public async Task<int> DeleteAndCommitAsync(string deleteStatement, dynamic vars) {
             int count;
@@ -508,6 +542,24 @@ namespace Butterfly.Core.Database {
                 }
             }
             return sb.ToString();
+        }
+
+        protected async Task<object> GetKeyValue(TableIndex whereIndex, Dict varsDict, Dict executableParams, StatementEqualsRef[] whereRefs, TableIndex primaryIndex, string tableName) {
+            Dict fieldValues;
+            if (whereIndex.IndexType == TableIndexType.Primary) {
+                fieldValues = BaseStatement.RemapStatementParamsToFieldValues(varsDict, whereRefs);
+            }
+            else {
+                // This extra select to convert from a non-primary key index to a primary key index is unfortunate
+                var selectValues = whereRefs.ToDictionary(x => x.fieldName, x => executableParams[x.fieldName]);
+                fieldValues = await SelectRowAsync($"SELECT {string.Join(",", primaryIndex.FieldNames)} FROM {tableName}", selectValues);
+            }
+            if (fieldValues == null) {
+                return null;
+            }
+            else {
+                return BaseDatabase.GetKeyValue(primaryIndex.FieldNames, fieldValues);
+            }
         }
 
         internal static Dict ParseKeyValue(object keyValue, string[] keyFieldNames) {

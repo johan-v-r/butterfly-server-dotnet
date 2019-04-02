@@ -58,6 +58,7 @@ namespace Butterfly.Core.Test {
 			
             await TruncateData(database);
             await TestTransactions(database);
+            await UpdateWithTransactionTest(database);
 
             await TruncateData(database);
             (object salesDepartmentId, object hrDepartmentId, object customerServiceDepartmentId) = await InsertBasicData(database);
@@ -160,20 +161,50 @@ namespace Butterfly.Core.Test {
             Dict[] allDepartments2 = await database.SelectRowsAsync("SELECT * FROM department");
             Assert.AreEqual(0, allDepartments2.Length);
 
-            using (ITransaction transaction = await database.BeginTransactionAsync()) {
+            using (var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled)) {
                 // Add Sales department
-                await transaction.InsertAsync<string>("department", new {
+                await database.InsertAsync<string>("department", new {
                     name = "Sales",
                 });
 
                 Dict[] allDepartments1 = await database.SelectRowsAsync("SELECT * FROM department");
                 Assert.AreEqual(0, allDepartments1.Length);
 
-                await transaction.CommitAsync();
+                transaction.Complete();
             }
 
             Dict[] allDepartments3 = await database.SelectRowsAsync("SELECT * FROM department");
             Assert.AreEqual(1, allDepartments3.Length);
+        }
+
+        protected static async Task UpdateWithTransactionTest(IDatabase database) {
+            var name = "foo";
+            var updatedName = "updated foo";
+            var id = await database.InsertAsync<string>("department", new { name });
+
+            using (var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled)) {
+                await database.UpdateAsync("department", new {
+                    id = id,
+                    name = updatedName
+                });
+
+                // implicit rollback
+            }
+
+            var departmentName = await database.SelectValueAsync<string>("SELECT name FROM department WHERE id=@id", new { id });
+            Assert.AreNotEqual(updatedName, departmentName);
+
+            using (var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled)) {
+                await database.UpdateAsync("department", new {
+                    id = id,
+                    name = updatedName
+                });
+
+                transaction.Complete();
+            }
+
+            departmentName = await database.SelectValueAsync<string>("SELECT name FROM department WHERE id=@id", new { id });
+            Assert.AreEqual(updatedName, departmentName);
         }
 
         protected static async Task SelectBasicData(IDatabase database, object salesDepartmentId, object hrDepartmentId, object customerServiceDepartmentId) {

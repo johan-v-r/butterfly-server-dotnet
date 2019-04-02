@@ -135,6 +135,33 @@ namespace Butterfly.Core.Database.Memory {
             return sb.ToString();
         }
 
+        protected override Task<int> DoUpdateAsync(string executableSql, Dict executableParams) {
+            UpdateStatement executableStatement = new UpdateStatement(this, executableSql);
+            if (!(executableStatement.StatementFromRefs[0].table is MemoryTable memoryTable)) throw new Exception("Table is not a MemoryTable");
+
+            (var whereIndex, var setRefs, var whereRefs) = executableStatement.GetWhereIndexSetRefsAndWhereRefs(this, executableParams);
+            var fieldValues = BaseStatement.RemapStatementParamsToFieldValues(executableParams, setRefs);
+
+            string evaluatedWhereClause = EvaluateWhereClause(executableStatement.whereClause, executableParams, executableStatement.StatementFromRefs);
+            var dataRows = memoryTable.DataTable.Select(evaluatedWhereClause);
+            int count = 0;
+            foreach (var dataRow in dataRows) {
+                bool changed = false;
+
+                foreach (var fieldValue in fieldValues) {
+                    if (dataRow[fieldValue.Key] != fieldValue.Value) {
+                        dataRow[fieldValue.Key] = fieldValue.Value;
+                        changed = true;
+                    }
+                }
+                
+                if (changed) count++;
+            }
+
+            AddChangeTable(memoryTable);
+            return Task.FromResult(count);
+        }
+
         protected override Task<Func<object>> DoInsertAsync(string executableSql, Dict executableParams, bool ignoreIfDuplicate)
         {
             InsertStatement executableStatement = new InsertStatement(this, executableSql);
