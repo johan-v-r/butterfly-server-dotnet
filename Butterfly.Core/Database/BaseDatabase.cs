@@ -130,7 +130,7 @@ namespace Butterfly.Core.Database {
         protected abstract Task<Table> LoadTableSchemaAsync(string tableName);
 
         // Manage data event transaction listeners
-        protected readonly List<KeyValueDataEvent> dataEvents = new List<KeyValueDataEvent>();
+        protected readonly Dictionary<string, List<KeyValueDataEvent>> transactionDataEvents = new Dictionary<string, List<KeyValueDataEvent>>();
 
         protected readonly List<DataEventTransactionListener> uncommittedTransactionListeners = new List<DataEventTransactionListener>();
         public IDisposable OnNewUncommittedTransaction(Action<DataEventTransaction> listener) => new ListItemDisposable<DataEventTransactionListener>(uncommittedTransactionListeners, new DataEventTransactionListener(listener));
@@ -301,11 +301,9 @@ namespace Butterfly.Core.Database {
             }
 
             // Create data event
-            this.dataEvents.Add(new KeyValueDataEvent(DataEventType.Insert, insertStatement.StatementFromRefs[0].table.Name, keyValue));
+            await DispatchDataEventTransactions(new KeyValueDataEvent(DataEventType.Insert, insertStatement.StatementFromRefs[0].table.Name, keyValue));
 
             InsertCount++;
-
-            await DispatchDataEventTransactions();
             return keyValue;
         }
 
@@ -340,12 +338,11 @@ namespace Butterfly.Core.Database {
             else {
                 count = await this.DoUpdateAsync(executableSql, executableParams);
 
-                dataEvents.Add(new KeyValueDataEvent(DataEventType.Update, updateStatement.StatementFromRefs[0].table.Name, keyValue));
+                await DispatchDataEventTransactions(new KeyValueDataEvent(DataEventType.Update, updateStatement.StatementFromRefs[0].table.Name, keyValue));
 
                 UpdateCount++;
             }
-
-            await DispatchDataEventTransactions();
+            
             return count;
         }
 
@@ -378,12 +375,11 @@ namespace Butterfly.Core.Database {
             else {
                 count = await this.DoDeleteAsync(executableSql, executableParams);
 
-                dataEvents.Add(new KeyValueDataEvent(DataEventType.Delete, deleteStatement.StatementFromRefs[0].table.Name, keyValue));
+                await DispatchDataEventTransactions(new KeyValueDataEvent(DataEventType.Delete, deleteStatement.StatementFromRefs[0].table.Name, keyValue));
 
                 DeleteCount++;
             }
-
-            await DispatchDataEventTransactions();
+            
             return count;
         }
 
@@ -597,26 +593,46 @@ namespace Butterfly.Core.Database {
             return result;
         }
 
-        private async Task DispatchDataEventTransactions() {
+        private async Task DispatchDataEventTransactions(KeyValueDataEvent dataEvent) {
             if (Transaction.Current == null) {
-                await CommitAsync();
+                var key = (new Guid()).ToString();
+                AddDataEvent(key, dataEvent);
+                await CommitAsync(key);
                 return;
             }
 
-            Transaction.Current.TransactionCompleted += async (object sender, TransactionEventArgs e) => {
-                if (e.Transaction.TransactionInformation.Status == TransactionStatus.Committed)
-                    await CommitAsync();
-            };
+            AddDataEvent(Transaction.Current.TransactionInformation.LocalIdentifier, dataEvent);
+            var dataEvents = transactionDataEvents.First(e => e.Key == Transaction.Current.TransactionInformation.LocalIdentifier).Value;
+
+            if (dataEvents.Count == 1) // only add the TransactionCompleted event once
+                Transaction.Current.TransactionCompleted += async (object sender, TransactionEventArgs e) => {
+                    if (e.Transaction.TransactionInformation.Status == TransactionStatus.Committed)
+                        await CommitAsync(e.Transaction.TransactionInformation.LocalIdentifier);
+
+                    if (e.Transaction.TransactionInformation.Status == TransactionStatus.Aborted)
+                        transactionDataEvents.Remove(e.Transaction.TransactionInformation.LocalIdentifier);
+                };
+        }
+
+        private void AddDataEvent(string key, KeyValueDataEvent dataEvent) {
+            var transactionEvents = transactionDataEvents.FirstOrDefault(d => d.Key == key);
+
+            if (transactionEvents.Equals(default(KeyValuePair<string, List<KeyValueDataEvent>>)))
+                transactionDataEvents.Add(key, new List<KeyValueDataEvent> { dataEvent });
+            else
+                transactionEvents.Value.Add(dataEvent);
         }
         
-        private async Task CommitAsync() {
-            DataEventTransaction dataEventTransaction = this.dataEvents.Count > 0 ? new DataEventTransaction(DateTime.Now, this.dataEvents.ToArray()) : null;
+        private async Task CommitAsync(string key) {
+            var dataEvents = transactionDataEvents.First(e => e.Key == key).Value;
+
+            DataEventTransaction dataEventTransaction = dataEvents.Count > 0 ? new DataEventTransaction(DateTime.Now, dataEvents.ToArray()) : null;
             if (dataEventTransaction != null) {
-                //await PostDataEventTransactionAsync(TransactionState.Uncommitted, dataEventTransaction);
+                await PostDataEventTransactionAsync(TransactionState.Uncommitted, dataEventTransaction);
                 await PostDataEventTransactionAsync(TransactionState.Committed, dataEventTransaction);
-                
+
                 // remove events as they're posted
-                dataEvents.RemoveAll(e => dataEventTransaction.dataEvents.Contains(e));
+                transactionDataEvents.Remove(key);
             }
             
             // unsure if still used

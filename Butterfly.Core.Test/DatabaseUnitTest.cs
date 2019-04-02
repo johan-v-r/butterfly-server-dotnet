@@ -152,10 +152,7 @@ namespace Butterfly.Core.Test {
                 await database.InsertAsync<string>("department", new {
                     name = "Sales",
                 });
-
-                Dict[] allDepartments1 = await database.SelectRowsAsync("SELECT * FROM department");
-                Assert.AreEqual(0, allDepartments1.Length);
-
+                
                 // implicit rollback
             }
 
@@ -167,10 +164,7 @@ namespace Butterfly.Core.Test {
                 await database.InsertAsync<string>("department", new {
                     name = "Sales",
                 });
-
-                Dict[] allDepartments1 = await database.SelectRowsAsync("SELECT * FROM department");
-                Assert.AreEqual(0, allDepartments1.Length);
-
+                
                 transaction.Complete();
             }
 
